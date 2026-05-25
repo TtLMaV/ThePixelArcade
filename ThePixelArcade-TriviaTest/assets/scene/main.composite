@@ -859,14 +859,9 @@
             "ageRating": "T",
             "categories": [],
             "author": "SDK",
-            "tags": [
-              ""
-            ],
+            "email": "",
+            "tags": [],
             "layout": {
-              "base": {
-                "x": 1,
-                "y": 1
-              },
               "parcels": [
                 {
                   "x": 0,
@@ -904,8 +899,14 @@
                   "x": 2,
                   "y": 0
                 }
-              ]
+              ],
+              "base": {
+                "x": 1,
+                "y": 1
+              }
             },
+            "silenceVoiceChat": false,
+            "disablePortableExperiences": false,
             "spawnPoints": [
               {
                 "name": "SpawnArea1",
@@ -919,8 +920,11 @@
                     ]
                   },
                   "y": {
-                    "$case": "single",
-                    "value": 0
+                    "$case": "range",
+                    "value": [
+                      0,
+                      0
+                    ]
                   },
                   "z": {
                     "$case": "range",
@@ -937,7 +941,9 @@
                 }
               }
             ],
-            "skyboxConfig": {}
+            "skyboxConfig": {},
+            "creator": "",
+            "disableNearbyVoiceChat": false
           }
         }
       }
