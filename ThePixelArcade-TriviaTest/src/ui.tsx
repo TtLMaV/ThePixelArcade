@@ -70,6 +70,13 @@ export function UpdateTriviaUi(inQTxt: string = '', inB1Txt: string = '', inB2Tx
   B4V = (B4Txt != '') ? 'flex' : 'none'
 
   //
+  QV = 'none'
+  B1V = 'none'
+  B2V = 'none'
+  B3V = 'none'
+  B4V = 'none'
+
+  //
   currentAnswer = AnswerNumber
 }
 

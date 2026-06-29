@@ -1,6 +1,7 @@
-import {Vector3} from '@dcl/sdk/math'
-import { engine, ParticleSystem, Transform, CameraModeArea, CameraType } from '@dcl/sdk/ecs'
+import {Color4, Vector3} from '@dcl/sdk/math'
+import { engine, TextShape, ParticleSystem, Transform, CameraModeArea, CameraType, PBTextShape } from '@dcl/sdk/ecs'
 import { SetUpTriviaUi, UpdateTriviaUi} from './ui'
+import { MainSignTag } from '../assets/scene/Scripts/ChangeText'
 import { signedFetch } from '~system/SignedFetch'
 
 // Class for storing trivia questions
@@ -248,10 +249,17 @@ export async function GameLoop()
 // =========================================================================
 // Main
 // =========================================================================
-let curQuestionIndex = 0;
-let maxQuestions = 10;
-let questionsCatagory = 15;
-let newQuestions: TriviaQuestion[];
+let curQuestionIndex = 0
+let curAnswerValue = 0
+let maxQuestions = 10
+let questionsCatagory = 15
+let newQuestions: TriviaQuestion[]
+
+let tShapeQuest: PBTextShape
+let tShapeAnsA: PBTextShape
+let tShapeAnsB: PBTextShape
+let tShapeAnsC: PBTextShape
+let tShapeAnsD: PBTextShape
 
 export function main() {
 
@@ -289,6 +297,49 @@ function tryNextQuestion()
   }
 }
 
+function VerifyTextField()
+{
+    // Check All The Answer Text Fields
+  const QuestionText = engine.getEntityOrNullByName('Screen_Text')
+  if (QuestionText !== null) {
+    if (TextShape.has(QuestionText)) {
+      tShapeQuest = TextShape.getMutable(QuestionText)
+    }
+  }
+
+  //
+  const AnsAText = engine.getEntityOrNullByName('Answer_A')
+  if (AnsAText !== null) {
+    if (TextShape.has(AnsAText)) {
+      tShapeAnsA = TextShape.getMutable(AnsAText)
+    }
+  }
+
+  //
+  const AnsBText = engine.getEntityOrNullByName('Answer_B')
+  if (AnsBText !== null) {
+    if (TextShape.has(AnsBText)) {
+      tShapeAnsB = TextShape.getMutable(AnsBText)
+    }
+  }
+
+  //
+  const AnsCText = engine.getEntityOrNullByName('Answer_C')
+  if (AnsCText !== null) {
+    if (TextShape.has(AnsCText)) {
+      tShapeAnsC = TextShape.getMutable(AnsCText)
+    }
+  }
+
+  //
+  const AnsDText = engine.getEntityOrNullByName('Answer_D')
+  if (AnsDText !== null) {
+    if (TextShape.has(AnsDText)) {
+      tShapeAnsD = TextShape.getMutable(AnsDText)
+    }
+  }
+}
+
 //
 export function askRandomQuestion(newQuestions: TriviaQuestion[] ) {
 
@@ -304,5 +355,70 @@ export function askRandomQuestion(newQuestions: TriviaQuestion[] ) {
   const Answer = currentQuestion.correctIndex + 1;
 
   //
-  UpdateTriviaUi(QText, A1Text, A2Text, A3Text, A4Text, Answer)
+  VerifyTextField()
+
+  // Set All Texts
+  tShapeQuest.text = wrapText(QText, 30)
+  tShapeAnsA.text = wrapText(A1Text, 10)
+  tShapeAnsA.textColor = Color4.create(1, 1, 1, 1)
+  tShapeAnsB.text = wrapText(A2Text, 10)
+  tShapeAnsB.textColor = Color4.create(1, 1, 1, 1)
+  tShapeAnsC.text = wrapText(A3Text, 10)
+  tShapeAnsC.textColor = Color4.create(1, 1, 1, 1)
+  tShapeAnsD.text = wrapText(A4Text, 10)
+  tShapeAnsD.textColor = Color4.create(1, 1, 1, 1)
+
+  //
+  setTimeout(() => {
+    verifyAnswer(curAnswerValue);
+  }, 15000);
+}
+
+//
+function wrapText(input: string, maxChars: number = 10): string {
+  // Regex matches any chunk of characters up to maxChars, ending at a space
+  const regex = new RegExp(`(?<=\\s|^)(.{1,${maxChars}})(?:\\s+|$)`, 'g');
+  return input.match(regex)?.join('\n') || input;
+}
+
+//
+export function SetCurrentAnswer(answerIndex: number)
+{
+  curAnswerValue = answerIndex
+}
+
+//
+function verifyAnswer(answerIndex: number)
+{
+  console.log('GIVE ANSWER')
+
+  let thisAnswer = newQuestions[curQuestionIndex].correctIndex + 1
+  if(answerIndex == thisAnswer)
+  {
+    tShapeQuest.text = wrapText("Correct", 30)
+  } else {
+    tShapeQuest.text = wrapText("Incorrect", 30)
+  }
+
+  //
+  VerifyTextField()
+
+  //
+  tShapeAnsA.textColor = Color4.create(1, 0, 0, 1)
+  tShapeAnsB.textColor = Color4.create(1, 0, 0, 1)
+  tShapeAnsC.textColor = Color4.create(1, 0, 0, 1)
+  tShapeAnsD.textColor = Color4.create(1, 0, 0, 1)
+
+  switch(thisAnswer)
+  {
+    case 1: tShapeAnsA.textColor = Color4.create(0, 1, 0, 1); break;
+    case 2: tShapeAnsB.textColor = Color4.create(0, 1, 0, 1); break;
+    case 3: tShapeAnsC.textColor = Color4.create(0, 1, 0, 1); break;
+    case 4: tShapeAnsD.textColor = Color4.create(0, 1, 0, 1); break;
+  }
+
+  //
+  setTimeout(() => {    
+    tryNextQuestion();
+  }, 3000);
 }
