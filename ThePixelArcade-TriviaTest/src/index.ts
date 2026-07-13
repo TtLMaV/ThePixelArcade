@@ -1,6 +1,8 @@
 import {Color4, Vector3} from '@dcl/sdk/math'
-import { engine, TextShape, ParticleSystem, Transform, CameraModeArea, CameraType, PBTextShape } from '@dcl/sdk/ecs'
-import { SetUpTriviaUi, UpdateTriviaUi} from './ui'
+import { engine, TextShape, Transform, CameraModeArea, CameraType, PBTextShape, Schemas } from '@dcl/sdk/ecs'
+import { SetUpTriviaUi, UpdateNumberCorrect} from './ui'
+import { syncEntity, isStateSyncronized } from '@dcl/sdk/network'
+import { getPlayer, onLeaveScene } from '@dcl/sdk/players'
 import { MainSignTag } from '../assets/scene/Scripts/ChangeText'
 import { signedFetch } from '~system/SignedFetch'
 
@@ -72,15 +74,15 @@ export interface TriviaQuestion {
 const API_BASE = 'https://opentdb.com'
 let sessionToken: string | null = null
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await signedFetch({ url, init: {
-      method: 'GET',
-      headers: {}
-  } })
-  if (!res.body) {
-    throw new Error(`Empty response from ${url}`)
-  }
-  return JSON.parse(res.body) as T
+async function fetchJson<T>(url: string, retries = 2): Promise<T> {
+  const res = await signedFetch({ url, init: { method: 'GET', headers: {} } })
+  if (!res.body) throw new Error(`Empty response from ${url}`)
+
+  const parsed = JSON.parse(res.body)
+  // opentdb doesn't always surface 429 as response_code; if you see a 429
+  // in the exception rather than a parsed body, this catch won't fire —
+  // wrap the signedFetch call itself in a try/catch with a delay + retry too.
+  return parsed as T
 }
 
 async function requestNewToken(): Promise<string> {
@@ -230,6 +232,15 @@ export async function fetchQuestions(opts: FetchOptions): Promise<TriviaQuestion
   }
 }
 
+
+
+/*
+// ----------------------------------
+//
+// OLD SHIT
+//
+//
+// ----------------------------------
 
 // Clear the cached session token, eg between game sessions.
 export function clearSession(): void {
@@ -421,4 +432,281 @@ function verifyAnswer(answerIndex: number)
   setTimeout(() => {    
     tryNextQuestion();
   }, 3000);
+}
+
+*/
+
+// =========================================================================
+// Synced state — this is the only thing every client trusts
+// =========================================================================
+
+// Keep enum ids under 8001, see DCL docs on entityEnumId
+enum SyncIds {
+  TRIVIA_STATE = 1,
+  HOST_CLAIM = 2,
+}
+
+export const TriviaState = engine.defineComponent('TriviaStateComponent', {
+  roundId: Schemas.Int,        // bumped every time the host publishes a new question
+  phase: Schemas.String,        // 'question' | 'answer'
+  questionText: Schemas.String,
+  answerA: Schemas.String,
+  answerB: Schemas.String,
+  answerC: Schemas.String,
+  answerD: Schemas.String,
+  correctIndex: Schemas.Int,    // 1-4
+})
+
+export const HostClaim = engine.defineComponent('HostClaimComponent', {
+  hostUserId: Schemas.String,
+})
+
+const triviaStateEntity = engine.addEntity()
+const hostClaimEntity = engine.addEntity()
+
+function setUpSyncedEntities() {
+  TriviaState.create(triviaStateEntity, {
+    roundId: 0, phase: 'question',
+    questionText: '', answerA: '', answerB: '', answerC: '', answerD: '',
+    correctIndex: 0,
+  })
+  HostClaim.create(hostClaimEntity, { hostUserId: '' })
+
+  syncEntity(triviaStateEntity, [TriviaState.componentId], SyncIds.TRIVIA_STATE)
+  syncEntity(hostClaimEntity, [HostClaim.componentId], SyncIds.HOST_CLAIM)
+}
+
+// =========================================================================
+// Host election — first synced player to see an empty claim takes it
+// =========================================================================
+
+let claimAttempted = false
+let hostConfirmed = false
+let gameLoopStarted = false
+
+function tryClaimHost() {
+  if (claimAttempted || !isStateSyncronized()) return
+  claimAttempted = true
+
+  const claim = HostClaim.getMutable(hostClaimEntity)
+  if (claim.hostUserId === '') {
+    const me = getPlayer()
+    if (me) claim.hostUserId = me.userId
+  }
+
+  // Don't trust this yet — give CRDT time to converge in case someone
+  // else claimed in the same tick. Re-check after it's had time to settle.
+  setTimeout(() => {
+    const me = getPlayer()
+    const settled = HostClaim.get(hostClaimEntity)
+    hostConfirmed = !!me && settled.hostUserId === me.userId
+  }, 1000)
+}
+
+function isLocalPlayerHost(): boolean {
+  return hostConfirmed
+}
+
+onLeaveScene((userId) => {
+  const claim = HostClaim.get(hostClaimEntity)
+  if (claim.hostUserId !== userId) return // wasn't the host, ignore
+
+  // Host left — release the claim so another client can pick it up
+  const mutClaim = HostClaim.getMutable(hostClaimEntity)
+  mutClaim.hostUserId = ''
+
+  // Reset local election state so remaining clients re-run tryClaimHost
+  claimAttempted = false
+  hostConfirmed = false
+  gameLoopStarted = false
+})
+
+// =========================================================================
+// Host-only game loop (unchanged fetch logic, just gated + publishing state)
+// =========================================================================
+
+let curQuestionIndex = 0
+let curAnswerValue = 0
+let maxQuestions = 10
+let questionsCatagory = 15
+let newQuestions: TriviaQuestion[] = []
+
+export async function GameLoop() {
+  if (!isLocalPlayerHost()) return // everyone else just waits for synced state
+
+  const newQO: FetchOptions = { amount: maxQuestions, category: questionsCatagory, difficulty: 'easy', type: 'multiple', useSessionToken: true }
+  newQuestions = await fetchQuestions(newQO)
+  curQuestionIndex = 0
+  publishCurrentQuestion()
+}
+
+function publishCurrentQuestion() {
+  const q = newQuestions[curQuestionIndex]
+  const state = TriviaState.getMutable(triviaStateEntity)
+  state.roundId += 1
+  state.phase = 'question'
+  state.questionText = q.question
+  state.answerA = q.answers[0]
+  state.answerB = q.answers[1]
+  state.answerC = q.answers[2]
+  state.answerD = q.answers[3]
+  state.correctIndex = q.correctIndex + 1
+
+  // host owns timing too, so everyone reveals/advances together
+  setTimeout(() => revealAnswer(), 15000)
+}
+
+function revealAnswer() {
+  if (!isLocalPlayerHost()) return
+  const state = TriviaState.getMutable(triviaStateEntity)
+  state.phase = 'answer'
+  setTimeout(() => tryNextQuestion(), 3000)
+}
+
+function tryNextQuestion() {
+  if (!isLocalPlayerHost()) return
+  curQuestionIndex++
+  if (curQuestionIndex > maxQuestions - 1) {
+    curQuestionIndex = 0
+    GameLoop()
+  } else {
+    publishCurrentQuestion()
+  }
+}
+
+// =========================================================================
+// Score tracking (local per-player, not synced)
+// =========================================================================
+
+let myScore = 0
+let lastScoredRoundId = -1
+
+let tShapeScore: PBTextShape
+
+// =========================================================================
+// Rendering — runs on EVERY client, driven only by synced TriviaState
+// =========================================================================
+
+let lastSeenRoundId = -1
+let lastSeenPhase = ''
+
+let tShapeQuest: PBTextShape
+let tShapeAnsA: PBTextShape
+let tShapeAnsB: PBTextShape
+let tShapeAnsC: PBTextShape
+let tShapeAnsD: PBTextShape
+
+function VerifyTextField()
+{
+  // Check All The Answer Text Fields
+  const QuestionText = engine.getEntityOrNullByName('Screen_Text')
+  if (QuestionText !== null) {
+    if (TextShape.has(QuestionText)) {
+      tShapeQuest = TextShape.getMutable(QuestionText)
+    }
+  }
+
+  //
+  const AnsAText = engine.getEntityOrNullByName('Answer_A')
+  if (AnsAText !== null) {
+    if (TextShape.has(AnsAText)) {
+      tShapeAnsA = TextShape.getMutable(AnsAText)
+    }
+  }
+
+  //
+  const AnsBText = engine.getEntityOrNullByName('Answer_B')
+  if (AnsBText !== null) {
+    if (TextShape.has(AnsBText)) {
+      tShapeAnsB = TextShape.getMutable(AnsBText)
+    }
+  }
+
+  //
+  const AnsCText = engine.getEntityOrNullByName('Answer_C')
+  if (AnsCText !== null) {
+    if (TextShape.has(AnsCText)) {
+      tShapeAnsC = TextShape.getMutable(AnsCText)
+    }
+  }
+
+  //
+  const AnsDText = engine.getEntityOrNullByName('Answer_D')
+  if (AnsDText !== null) {
+    if (TextShape.has(AnsDText)) {
+      tShapeAnsD = TextShape.getMutable(AnsDText)
+    }
+  }
+}
+
+function renderFromState() {
+  const state = TriviaState.get(triviaStateEntity)
+  if (state.roundId === lastSeenRoundId && state.phase === lastSeenPhase) return
+  lastSeenRoundId = state.roundId
+  lastSeenPhase = state.phase
+
+  VerifyTextField()
+
+  if (state.phase === 'question') {
+    tShapeQuest.text = wrapText(state.questionText, 30)
+    tShapeAnsA.text = wrapText(state.answerA, 10); tShapeAnsA.textColor = Color4.create(1,1,1,1)
+    tShapeAnsB.text = wrapText(state.answerB, 10); tShapeAnsB.textColor = Color4.create(1,1,1,1)
+    tShapeAnsC.text = wrapText(state.answerC, 10); tShapeAnsC.textColor = Color4.create(1,1,1,1)
+    tShapeAnsD.text = wrapText(state.answerD, 10); tShapeAnsD.textColor = Color4.create(1,1,1,1)
+  } else {
+    // 'answer' phase
+    const gotItRight = curAnswerValue === state.correctIndex
+
+    // Only score once per round, even if this function re-runs
+    if (state.roundId !== lastScoredRoundId) {
+      lastScoredRoundId = state.roundId
+      if (gotItRight) {
+        myScore++
+        UpdateNumberCorrect(myScore)
+      }
+    }
+
+    tShapeQuest.text = wrapText(gotItRight ? 'Correct' : 'Incorrect', 30)
+    const shapes = [tShapeAnsA, tShapeAnsB, tShapeAnsC, tShapeAnsD]
+    shapes.forEach((s, i) => { s.textColor = (i + 1 === state.correctIndex) ? Color4.create(0,1,0,1) : Color4.create(1,0,0,1) })
+  }
+}
+
+function wrapText(input: string, maxChars: number = 10): string {
+  const regex = new RegExp(`(?<=\\s|^)(.{1,${maxChars}})(?:\\s+|$)`, 'g')
+  return input.match(regex)?.join('\n') || input
+}
+
+export function SetCurrentAnswer(answerIndex: number) {
+  curAnswerValue = answerIndex
+}
+
+export function GetCurrentAnswer() {
+  curAnswerValue = answerIndex
+}
+
+// =========================================================================
+// Main
+// =========================================================================
+
+export function main() {
+  // Check All The Answer Text Fields
+  VerifyTextField()
+  tShapeQuest.text = "Loading..."
+
+  const firstPersonZone = engine.addEntity()
+  Transform.create(firstPersonZone, { position: Vector3.create(8, 2, 8) })
+  CameraModeArea.create(firstPersonZone, { area: Vector3.create(100, 100, 100), mode: CameraType.CT_FIRST_PERSON })
+
+  setUpSyncedEntities()
+  SetUpTriviaUi()
+
+  engine.addSystem(() => {
+    tryClaimHost()
+    renderFromState()
+    if (isLocalPlayerHost() && !gameLoopStarted) {
+      gameLoopStarted = true
+      GameLoop()
+   }
+  })
 }

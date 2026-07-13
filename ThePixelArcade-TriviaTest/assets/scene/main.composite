@@ -2,38 +2,6 @@
   "version": 1,
   "components": [
     {
-      "name": "composite::root",
-      "jsonSchema": {
-        "type": "object",
-        "properties": {
-          "src": {
-            "type": "string",
-            "serializationType": "utf8-string"
-          },
-          "entities": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "src": {
-                  "type": "integer",
-                  "serializationType": "entity"
-                },
-                "dest": {
-                  "type": "integer",
-                  "serializationType": "entity"
-                }
-              },
-              "serializationType": "map"
-            },
-            "serializationType": "array"
-          }
-        },
-        "serializationType": "map"
-      },
-      "data": {}
-    },
-    {
       "name": "core::Transform",
       "jsonSchema": {
         "type": "object",
@@ -181,16 +149,16 @@
               "y": 1,
               "z": 0.25
             },
+            "scale": {
+              "x": 3,
+              "y": 3,
+              "z": 3
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 3,
-              "y": 3,
-              "z": 3
             },
             "parent": 529
           }
@@ -454,16 +422,16 @@
               "y": 0,
               "z": 0
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 0
           }
@@ -475,16 +443,16 @@
               "y": 1,
               "z": 0.25
             },
+            "scale": {
+              "x": 3,
+              "y": 3,
+              "z": 3
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 3,
-              "y": 3,
-              "z": 3
             },
             "parent": 529
           }
@@ -496,16 +464,16 @@
               "y": 1,
               "z": 4
             },
+            "scale": {
+              "x": 3,
+              "y": 3,
+              "z": 3
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 3,
-              "y": 3,
-              "z": 3
             },
             "parent": 529
           }
@@ -517,16 +485,16 @@
               "y": 1,
               "z": 4
             },
+            "scale": {
+              "x": 3,
+              "y": 3,
+              "z": 3
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 3,
-              "y": 3,
-              "z": 3
             },
             "parent": 529
           }
@@ -1054,7 +1022,7 @@
         "serializationType": "map"
       },
       "data": {
-        "526": {
+        "0": {
           "json": {
             "gizmo": 0
           }
@@ -1105,7 +1073,6 @@
             "value": [
               {
                 "entity": 0,
-                "open": true,
                 "children": [
                   527,
                   512,
@@ -1353,7 +1320,7 @@
                 "T",
                 "A"
               ],
-              "default": "T",
+              "default": "A",
               "serializationType": "enum-string",
               "enumObject": {
                 "Teen": "T",
@@ -1655,9 +1622,12 @@
             "ageRating": "T",
             "categories": [],
             "author": "SDK",
-            "email": "",
             "tags": [],
             "layout": {
+              "base": {
+                "x": 1,
+                "y": 1
+              },
               "parcels": [
                 {
                   "x": 0,
@@ -1695,39 +1665,24 @@
                   "x": 2,
                   "y": 0
                 }
-              ],
-              "base": {
-                "x": 1,
-                "y": 1
-              }
+              ]
             },
-            "silenceVoiceChat": false,
-            "disablePortableExperiences": false,
             "spawnPoints": [
               {
                 "name": "SpawnArea1",
                 "default": true,
                 "position": {
                   "x": {
-                    "$case": "range",
-                    "value": [
-                      5,
-                      8
-                    ]
+                    "$case": "single",
+                    "value": 0
                   },
                   "y": {
-                    "$case": "range",
-                    "value": [
-                      0,
-                      0
-                    ]
+                    "$case": "single",
+                    "value": 0
                   },
                   "z": {
-                    "$case": "range",
-                    "value": [
-                      1,
-                      4
-                    ]
+                    "$case": "single",
+                    "value": 7.5
                   }
                 },
                 "cameraTarget": {
@@ -1737,9 +1692,9 @@
                 }
               }
             ],
-            "skyboxConfig": {},
-            "creator": "",
-            "disableNearbyVoiceChat": false
+            "skyboxConfig": {
+              "fixedTime": 40500
+            }
           }
         }
       }
@@ -2021,6 +1976,10 @@
               {
                 "type": "delete",
                 "jsonSchema": "{\"type\":\"object\",\"properties\":{},\"serializationType\":\"map\"}"
+              },
+              {
+                "type": "spawn_entity",
+                "jsonSchema": "{\"type\":\"object\",\"properties\":{\"src\":{\"type\":\"string\",\"serializationType\":\"utf8-string\"},\"position\":{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"},\"z\":{\"type\":\"number\"},\"w\":{\"type\":\"number\"}},\"serializationType\":\"vector3\"}},\"serializationType\":\"map\"}"
               }
             ]
           }

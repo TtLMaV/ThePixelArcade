@@ -2,6 +2,48 @@ import ReactEcs, { ReactEcsRenderer, UiEntity, Button} from "@dcl/sdk/react-ecs"
 import * as utils from '@dcl-sdk/utils'
 import { Color4 } from '@dcl/sdk/math'
 
+let numberAnswers = "0"
+
+export function UpdateNumberCorrect(amountCorrect: number)
+{
+  numberAnswers = amountCorrect.toString()
+}
+
+export const TriviaUi = () => (
+  <UiEntity
+    uiTransform={{
+      width: 800,
+      height: 80,
+      positionType: 'absolute',
+      position: { bottom: '5%', left: '50%' },
+      margin: { left: -400 },
+      display: "flex",
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'column',
+    }}
+    uiBackground={{ color: Color4.create(0, 0, 0, 0.8) }}
+  >
+
+    // Question Text at the top
+    <UiEntity
+      uiTransform={{ width: '90%', height: 100, margin: { top: 20, bottom: 20 } }}
+      uiText={{
+        value: "Correct: " + numberAnswers,
+        fontSize: 28,
+        color: Color4.White(),
+      }}
+    />
+  </UiEntity>
+)
+
+export function SetUpTriviaUi() {
+  //
+  ReactEcsRenderer.setUiRenderer(TriviaUi, { virtualWidth: 1920, virtualHeight: 1080 })
+}
+
+/*
+
 //
 var QV: 'flex' | 'none' = 'none'
 var QTxt: string = ''
@@ -220,3 +262,4 @@ export const TriviaUi = () => (
     </UiEntity>
   </UiEntity>
 )
+*/

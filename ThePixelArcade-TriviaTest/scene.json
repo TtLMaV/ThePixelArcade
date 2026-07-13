@@ -33,18 +33,9 @@
       "name": "SpawnArea1",
       "default": true,
       "position": {
-        "x": [
-          5,
-          8
-        ],
-        "y": [
-          0,
-          0
-        ],
-        "z": [
-          1,
-          4
-        ]
+        "x": 0,
+        "y": 0,
+        "z": 7.5
       },
       "cameraTarget": {
         "x": 8,
@@ -63,7 +54,9 @@
     "nearbyVoiceChat": "enabled"
   },
   "creator": "",
-  "skyboxConfig": {},
+  "skyboxConfig": {
+    "fixedTime": 40500
+  },
   "source": {
     "origin": "creator-hub",
     "projectId": "2b4a27de-8ae3-4385-ad85-67be59e14b74"
