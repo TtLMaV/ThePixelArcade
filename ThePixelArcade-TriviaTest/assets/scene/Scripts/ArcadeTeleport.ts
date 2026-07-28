@@ -3,7 +3,7 @@ import { getTriggerEvents } from '@dcl/asset-packs/dist/events'
 import { TriggerType } from '@dcl/asset-packs'
 import { movePlayerTo } from '~system/RestrictedActions'
 import { Vector3 } from '@dcl/sdk/math'
-import { UpdateText, UpdateShowUI} from '../../../src/ui'
+import { UpdateText, UpdateShowUI, UpdateTeleportUI} from '../../../src/ui'
 
 // TeleportPositionSettings
 const teleportPosition_1 = Vector3.create(0, 1, 7.5)
@@ -56,10 +56,8 @@ export function main() {
         const secondsLeft = Math.ceil(timeRemaining)
         if (secondsLeft !== lastLoggedSecond && secondsLeft >= 0) {
             lastLoggedSecond = secondsLeft
-            UpdateShowUI(true)
-            if(teleportID == 1) {UpdateText("Teleporting To Trivia: ", secondsLeft)}
-            if(teleportID == 2) {UpdateText("Teleporting To Hub: ", secondsLeft)}
-            //console.log(`Teleporting in ${secondsLeft}...`)
+            if(teleportID == 1) {UpdateTeleportUI(true, "Teleporting To Trivia: " + secondsLeft.toString())}
+            if(teleportID == 2) {UpdateTeleportUI(true, "Teleporting To Hub: " + secondsLeft.toString())}
         } 
         if (timeRemaining <= 0) {
             isCountingDown = false
@@ -77,10 +75,8 @@ function startCountdown() {
     timeRemaining = TeleportCountdown
     lastLoggedSecond = -1
 
-    UpdateShowUI(true)
-    if(teleportID == 1) {UpdateText("Teleporting To Trivia: ", TeleportCountdown)}
-    if(teleportID == 2) {UpdateText("Teleporting To Hub: ", TeleportCountdown)}
-    //console.log(`Teleporting in ${COUNTDOWN_SECONDS}...`)
+    if(teleportID == 1) {UpdateTeleportUI(true, "Teleporting To Trivia: " + TeleportCountdown.toString())}
+    if(teleportID == 2) {UpdateTeleportUI(true, "Teleporting To Hub: " + TeleportCountdown.toString())}
 }
 
 function cancelCountdown() {
@@ -88,12 +84,14 @@ function cancelCountdown() {
 
     isCountingDown = false
     UpdateShowUI(false)
+    UpdateTeleportUI(false, "")
     //console.log('Teleport cancelled, player left the trigger area')
 }
 
 async function teleportPlayer() {
     //console.log('Teleporting now!')
     UpdateShowUI(false)
+    UpdateTeleportUI(false, "")
     if(teleportID == 1)
     {
         await movePlayerTo({

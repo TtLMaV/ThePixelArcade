@@ -1,6 +1,6 @@
 
 import { engine, Entity, Transform} from '@dcl/sdk/ecs'
-import {} from '@dcl/sdk/math'
+import {Quaternion} from '@dcl/sdk/math'
 import { GetCurrentState } from '../../../src/index'
 
 export class TimerSpin {
@@ -16,17 +16,25 @@ export class TimerSpin {
   }
   
   update(dt: number) {
-    // Called every frame
-    const myEntity = this.entity
-    const mutableTransform = Transform.getMutable(myEntity)
+  // Called every frame
+  const myEntity = this.entity
+  const mutableTransform = Transform.getMutable(myEntity)
 
-    // 
-    this.curTime -= dt
-    var elapsed = this.curTime % this.travelTime
-    var angle = (elapsed / this.travelTime) * Math.PI * 2
-    mutableTransform.rotation.z = Math.cos(angle)
-    mutableTransform.rotation.w = Math.sin(angle)
+  this.curTime -= dt
+  const elapsed = this.curTime % this.travelTime
+  
+  // Calculate degrees (0 to 360)
+  const angleInDegrees = (elapsed / this.travelTime) * 360
 
-    mutableTransform.position.z = GetCurrentState() == 'question' ? -4.75 : -5
+  // 1. Create the local Z-axis spin rotation in degrees
+  const spinRotation = Quaternion.fromEulerDegrees(0, 0, angleInDegrees)
+
+  // 2. Define your base rotation (e.g., if you rotated the object on the Y axis by 90 degrees)
+  const baseRotation = Quaternion.fromEulerDegrees(0, 217.50, 0)
+
+  // 3. Multiply: Base * Spin rotates along the local Z-axis
+  mutableTransform.rotation = Quaternion.multiply(baseRotation, spinRotation)
+
+  mutableTransform.position.z = GetCurrentState() == 'question' || GetCurrentState() == 'genre' ? -4.48 : -5
   }
 }

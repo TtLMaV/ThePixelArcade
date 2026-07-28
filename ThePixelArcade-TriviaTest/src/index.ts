@@ -1,9 +1,11 @@
-import {Color4, Vector3} from '@dcl/sdk/math'
+import {Color4, Vector3, Quaternion} from '@dcl/sdk/math'
 import { engine, AudioSource, TextShape, Transform, CameraModeArea, CameraType, PBTextShape, Schemas, Entity } from '@dcl/sdk/ecs'
-import { SetUpTriviaUi, UpdateText, UpdateShowUI} from './ui'
+import { SetUpTriviaUi, UpdateText, UpdateShowUI, UpdateQuestionUI, UpdateAnswersUI} from './ui'
 import { syncEntity, isStateSyncronized } from '@dcl/sdk/network'
 import { getPlayer, onLeaveScene } from '@dcl/sdk/players'
 import { signedFetch } from '~system/SignedFetch'
+import { SetUpLeaderboard, tickLeaderboard, setCurrentCategory, submitCorrectAnswer } from './leaderboard'
+import { SetUpPeriodLeaderboard, tickPeriodLeaderboard } from './periodLeaderboard'
 
 // Class for storing trivia questions
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'any'
@@ -255,7 +257,9 @@ const VOTE_HEARTBEAT_MS = 1000
 const VOTE_TIMEOUT_MS = 4000
 
 export const TriviaState = engine.defineComponent('TriviaStateComponent', {
-  roundId: Schemas.Int,        // bumped every time the host publishes a new question
+  roundId: Schemas.Int,         // bumped every time the host publishes a new question
+  questionNumb: Schemas.Int,    // question number through genre
+  curQuestionType: Schemas.String,
   phase: Schemas.String,        // 'genre' | 'genrepicked' | 'question' | 'answer'
   questionText: Schemas.String,
   answerA: Schemas.String,
@@ -285,6 +289,7 @@ const hostClaimEntity = engine.addEntity()
 function setUpSyncedEntities() {
   TriviaState.create(triviaStateEntity, {
     roundId: 0, phase: 'genre',
+    questionNumb: 0, curQuestionType: '',
     questionText: '', answerA: '', answerB: '', answerC: '', answerD: '',
     correctIndex: 0,
     phaseEndTime: 0,
@@ -552,7 +557,8 @@ function resolveGenreVote(counts: number[]) {
 
   state.roundId += 1
   state.phase = 'genrepicked'
-  state.questionText = `${winnerName}!`
+  state.questionText = `${winnerName}`
+  state.curQuestionType = `${winnerName}`
   state.correctIndex = winner + 1
   state.phaseEndTime = Date.now() + GENRE_RESULT_DURATION_MS
 
@@ -596,6 +602,7 @@ async function fetchGenreQuestions(category: TriviaCategory): Promise<TriviaQues
 function publishCurrentQuestion() {
   const q = newQuestions[curQuestionIndex]
   const state = TriviaState.getMutable(triviaStateEntity)
+  state.questionNumb += 1
   state.roundId += 1
   state.phase = 'question'
   state.questionText = q.question
@@ -625,6 +632,8 @@ function tryNextQuestion() {
     // Round over — back to the genre vote rather than straight into more
     // questions of the same category.
     curQuestionIndex = 0
+    const state = TriviaState.getMutable(triviaStateEntity)
+    state.questionNumb = 0
     startGenreVote()
   } else {
     publishCurrentQuestion()
@@ -653,6 +662,8 @@ let tShapeAnsB: PBTextShape
 let tShapeAnsC: PBTextShape
 let tShapeAnsD: PBTextShape
 let tShapeTimer: PBTextShape
+let tShapeQNumb: PBTextShape
+let tShapeQType: PBTextShape
 
 function VerifyTextField()
 {
@@ -703,6 +714,22 @@ function VerifyTextField()
       tShapeTimer = TextShape.getMutable(TimerText)
     }
   }
+
+  //
+  const QNumbText = engine.getEntityOrNullByName('Question_Number')
+  if (QNumbText !== null) {
+    if (TextShape.has(QNumbText)) {
+      tShapeQNumb = TextShape.getMutable(QNumbText)
+    }
+  }
+
+  //
+  const QTypeText = engine.getEntityOrNullByName('Question_Type')
+  if (QTypeText !== null) {
+    if (TextShape.has(QTypeText)) {
+      tShapeQType = TextShape.getMutable(QTypeText)
+    }
+  }
 }
 
 function renderFromState() {
@@ -719,10 +746,16 @@ function renderFromState() {
   if (state.phase === 'question' || state.phase === 'genre') {
     // A genre vote draws exactly like a question: prompt on top, four options
     // in the answer slots, all neutral until it resolves.
-    tShapeQuest.text = wrapText(state.questionText, 30)
+    UpdateQuestionUI(true, state.questionText)
+    
+    const Qlines = Math.ceil(Math.log2((state.questionText.length + 65) / 40))
+    //console.log(state.questionText.length.toString() + " , " + Qlines.toString())
+    tShapeQuest.text = wrapTextToLines(state.questionText, Qlines)
+    const lineCount = tShapeQuest.text.split('\n').length
+    tShapeQuest.fontSize = 30 / lineCount
 
-    const Qlines = tShapeQuest.text.split('\n').length
-    tShapeQuest.fontSize = 30 / Qlines
+    tShapeQNumb.text = state.phase === 'question' ? "Q" + state.questionNumb : ""
+    tShapeQType.text = state.phase === 'question' ? wrapTextToLines(state.curQuestionType, 2) : ""
 
     tShapeAnsA.text = wrapText(state.answerA, 40); tShapeAnsA.textColor = Color4.create(1,1,1,1)
     tShapeAnsB.text = wrapText(state.answerB, 40); tShapeAnsB.textColor = Color4.create(1,1,1,1)
@@ -733,20 +766,29 @@ function renderFromState() {
     tShapeAnsA.fontSize = 15 / AAlines
     const ABlines = tShapeAnsB.text.split('\n').length
     tShapeAnsB.fontSize = 15 / ABlines
-    const AClines = tShapeAnsB.text.split('\n').length
+    const AClines = tShapeAnsC.text.split('\n').length
     tShapeAnsC.fontSize = 15 / AClines
-    const ADlines = tShapeAnsC.text.split('\n').length
+    const ADlines = tShapeAnsD.text.split('\n').length
     tShapeAnsD.fontSize = 15 / ADlines
 
   } else if (state.phase === 'genrepicked') {
     // Winning genre announced. Nothing is scored here, so the losing options
     // are dimmed rather than marked wrong.
+    UpdateQuestionUI(true, state.questionText + " Selected")
+
     tShapeQuest.text = wrapText(state.questionText, 30)
     const Qlines = tShapeQuest.text.split('\n').length
     tShapeQuest.fontSize = 30 / Qlines
 
     const shapes = [tShapeAnsA, tShapeAnsB, tShapeAnsC, tShapeAnsD]
     shapes.forEach((s, i) => { s.textColor = (i + 1 === state.correctIndex) ? Color4.create(0,1,0,1) : Color4.create(1,1,1,0.35) })
+
+    // Point the leaderboard at the category now being played. In this phase the
+    // answer slots still hold the four genre names, with correctIndex marking
+    // the winner, so this recovers the category on every client.
+    const winnerName = [state.answerA, state.answerB, state.answerC, state.answerD][state.correctIndex - 1]
+    const winnerCat = categoryForName(winnerName)
+    if (winnerCat !== null) setCurrentCategory(winnerCat, winnerName)
 
   } else {
     // 'answer' phase
@@ -757,8 +799,8 @@ function renderFromState() {
       lastScoredRoundId = state.roundId
       if (gotItRight) {
         myScore++
-        UpdateShowUI(true)
-        UpdateText("Correct: ", myScore)
+        UpdateAnswersUI(true, myScore)
+        submitCorrectAnswer() // record the point in the current category (all-time board)
       }
     }
     
@@ -775,9 +817,9 @@ function renderFromState() {
       }
     }
 
-    tShapeQuest.text = wrapText(gotItRight ? 'Correct' : 'Incorrect', 30)
-    const Qlines = tShapeQuest.text.split('\n').length
-    tShapeQuest.fontSize = 30 / Qlines
+    UpdateQuestionUI(false, "")
+    tShapeQuest.text = gotItRight ? 'Correct' : 'Incorrect'
+    tShapeQuest.fontSize = 25
     const shapes = [tShapeAnsA, tShapeAnsB, tShapeAnsC, tShapeAnsD]
     shapes.forEach((s, i) => { s.textColor = (i + 1 === state.correctIndex) ? Color4.create(0,1,0,1) : Color4.create(1,0,0,1) })
 
@@ -816,11 +858,57 @@ function renderTimer() {
   VerifyTextField()
   const display = showsClock ? `${secondsRemaining}` : ''
   tShapeTimer.text = display
+  tShapeTimer.textColor = secondsRemaining > 5 ? Color4.create(1,1,1,1) : Color4.create(1,0,0,1)
 }
 
 function wrapText(input: string, maxChars: number = 10): string {
   const regex = new RegExp(`(?<=\\s|^)(.{1,${maxChars}})(?:\\s+|$)`, 'g')
   return input.match(regex)?.join('\n') || input
+}
+
+function wrapTextToLines(input: string, targetLines: number = 2): string {
+  if (!input || targetLines <= 1) return input
+
+  const words = input.trim().split(/\s+/)
+  
+  // If there are fewer words than target lines, we can't create more lines than words
+  if (words.length <= targetLines) {
+    return words.join('\n')
+  }
+
+  const totalChars = input.length
+  const approxLineLength = Math.ceil(totalChars / targetLines)
+  
+  const lines: string[] = []
+  let currentLine = ''
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]
+    
+    // If we are on the LAST allowed line, dump all remaining words into it
+    if (lines.length === targetLines - 1) {
+      const remainingWords = words.slice(i).join(' ')
+      lines.push(currentLine ? `${currentLine} ${remainingWords}` : remainingWords)
+      break
+    }
+
+    // Check if adding the next word exceeds our target line length
+    const lineWithWord = currentLine ? `${currentLine} ${word}` : word
+
+    if (lineWithWord.length > approxLineLength && currentLine.length > 0) {
+      lines.push(currentLine)
+      currentLine = word
+    } else {
+      currentLine = lineWithWord
+    }
+  }
+
+  // Push the final line if we didn't hit the max limit break inside the loop
+  if (currentLine && lines.length < targetLines) {
+    lines.push(currentLine)
+  }
+
+  return lines.join('\n')
 }
 
 export function SetCurrentAnswer(answerIndex: number) {
@@ -878,11 +966,34 @@ export function main() {
   setUpSyncedEntities()
   SetUpTriviaUi()
 
+  // Persistent, per-category leaderboard board. Nudge position/rotation to fit
+  // your scene; baseUrl points at the deployed backend.
+  SetUpLeaderboard({
+    baseUrl: 'https://dcl-leaderboard.vercel.app',
+    position: Vector3.create(10.0, 3.0, -3.95),
+    rotation: Quaternion.fromEulerDegrees(0, 180, 0),
+    scale: 0.4,
+    rows: 8,
+  })
+
+  // Second board: cycles TODAY / THIS WEEK / THIS MONTH. Placed next to the
+  // per-category board (same wall/scale) — nudge position to fit your scene.
+  SetUpPeriodLeaderboard({
+    baseUrl: 'https://dcl-leaderboard.vercel.app',
+    position: Vector3.create(-10, 3.0, -3.95),
+    rotation: Quaternion.fromEulerDegrees(0, 180, 0),
+    scale: 0.4,
+    rows: 8,
+    cycleMs: 8000,
+  })
+
   engine.addSystem(() => {
     tryClaimHost()
     publishMyVote()
     renderFromState()
     renderTimer()
+    tickLeaderboard()
+    tickPeriodLeaderboard()
     if (isLocalPlayerHost()) {
       if (!gameLoopStarted) {
         gameLoopStarted = true
