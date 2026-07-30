@@ -31,9 +31,9 @@ interface Entry {
 }
 
 const CYCLE = [
-  { period: 'day', label: 'TODAY' },
-  { period: 'week', label: 'THIS WEEK' },
-  { period: 'month', label: 'THIS MONTH' },
+  { period: 'day', label: "TODAY'S" },
+  { period: 'week', label: "THIS WEEK'S" },
+  { period: 'month', label: "THIS MONTH'S" },
 ]
 
 // ---- config -------------------------------------------------------------

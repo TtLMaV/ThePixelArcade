@@ -1,4 +1,5 @@
-import ReactEcs, { ReactEcsRenderer, UiEntity, Button} from "@dcl/sdk/react-ecs"
+import ReactEcs, { ReactEcsRenderer, UiEntity, Label, scaleFontSize, ScreenInsetArea } from "@dcl/sdk/react-ecs"
+import { isMobile, getPlatform } from '@dcl/sdk/platform'
 import * as utils from '@dcl-sdk/utils'
 import { Color4 } from '@dcl/sdk/math'
 
@@ -8,6 +9,25 @@ let AnswerText = "0"
 var AnswerVisable: 'flex' | 'none' = 'none'
 var TeleportText = ""
 var TeleportVisable: 'flex' | 'none' = 'none'
+
+// ---- responsive font ----------------------------------------------------
+// scaleFontSize()'s responsive term is divided by devicePixelRatio, so on a
+// phone (ratio 2-3x) the text ends up tiny. Give mobile a much larger size.
+// Tune the two MOBILE numbers below until it reads well on your device;
+// desktop keeps your original values.
+function onMobile(): boolean {
+  try {
+    return typeof isMobile === 'function' ? (isMobile as () => boolean)() : !!isMobile
+  } catch {
+    return false
+  }
+}
+
+function labelFont(): number {
+  return onMobile()
+    ? scaleFontSize(34, '3.5vh') // MOBILE — increase these if still too small
+    : scaleFontSize(18, '1.0vh') // DESKTOP — your original
+}
 
 export function UpdateQuestionUI(showUIState: boolean, question: string)
 {
@@ -32,26 +52,27 @@ export function UpdateShowUI(showUIState: boolean){}
 export const TriviaUi = () => (
 
   // Question Text at the top
-  <UiEntity
+  <ScreenInsetArea
   uiTransform={{
-    width: '98%',
-    height: '98%',
-    positionType: 'absolute',
-    position: { top: '1%', bottom: '1%', right: '1%'},
-    margin: { left: -400 },
+    width: '100%',
+    height: '100%',
+    //positionType: 'absolute',
+    //position: { top: '1%', bottom: '1%', right: '1%'},
+    margin: { left: '0%' },
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'column',
-  }}uiBackground={{ color: Color4.create(0, 0, 0, 0) }}>
+  }}
+  uiBackground={{ color: Color4.create(0, 0, 0, 0) }}>
     <UiEntity
     uiTransform={{
-      width: 800,
-      height: 125,
+      width: '40%',
+      height: '12.5%',
       positionType: 'absolute',
       position: { top: '0%', left: '50%' },
-      margin: { left: -400 },
-      display: QuestionVisable,
+      margin: { left: '-20%' },
+      display: 'none',
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'column',
@@ -62,74 +83,72 @@ export const TriviaUi = () => (
       src: 'assets/scene/Images/Pixel_Arcade_2.png',
     }}}
     >
-      <UiEntity
-      uiTransform={{ width: '90%', height: 100, margin: { top: 20, bottom: 20 } }}
-      uiText={{
-        value: QuestionTest,
-        fontSize: 28,
-        color: Color4.White(),
-      }}
-  /></UiEntity>
+      <UiEntity uiTransform={{ width: '90%', height: '90%', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', }}>
+        <Label
+          value={QuestionTest}
+          fontSize={labelFont()}
+          textAlign="middle-center"
+          color={Color4.White()}
+        />
+      </UiEntity>
+    </UiEntity>
 
-  // Answers Text at the bottom
-  <UiEntity
-  uiTransform={{
-    width: 800,
-    height: 80,
-    positionType: 'absolute',
-    position: { bottom: '0%', left: '50%' },
-    margin: { left: -400 },
-    display: AnswerVisable,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'column',
-  }}
-  uiBackground={{
-    textureMode: 'stretch',
-    texture: {
-      src: 'assets/scene/Images/Pixel_Arcade.png',
-    }}}
-  >
-    
     <UiEntity
-      uiTransform={{ width: '90%', height: 100, margin: { top: 20, bottom: 20 } }}
-      uiText={{
-        value: AnswerText,
-        fontSize: 28,
-        color: Color4.White(),
-      }}
-    /></UiEntity>
-
-
-  // Teleport Text in the middle
-  <UiEntity
     uiTransform={{
-      width: 800,
-      height: 80,
+      width: '40%',
+      height: '8%',
       positionType: 'absolute',
-      position: { bottom: '50%', left: '50%' },
-      margin: { left: -400 },
-      display: TeleportVisable,
+      position: { bottom: '0%', left: '50%' },
+      margin: { left: '-20%' },
+      display: 'none',
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'column',
     }}
     uiBackground={{
-    textureMode: 'stretch',
-    texture: {
-      src: 'assets/scene/Images/Pixel_Arcade.png',
-    }}}
-  >
+      textureMode: 'stretch',
+      texture: {
+        src: 'assets/scene/Images/Pixel_Arcade.png',
+      }}}
+    >
+    <UiEntity uiTransform={{ width: '90%', height: '90%', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', }}>
+        <Label
+          value={AnswerText}
+          fontSize={labelFont()}
+          textAlign="middle-center"
+          color={Color4.White()}
+        />
+      </UiEntity>
+    </UiEntity>
 
-    // Question Text at the top
     <UiEntity
-      uiTransform={{ width: '90%', height: 100, margin: { top: 20, bottom: 20 } }}
-      uiText={{
-        value: TeleportText,
-        fontSize: 28,
-        color: Color4.White(),
+      uiTransform={{
+        width: '40%',
+        height: '8%',
+        positionType: 'absolute',
+        position: { bottom: '46%', left: '50%' },
+        margin: { left: '-20%' },
+        display: TeleportVisable,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
       }}
-    /></UiEntity></UiEntity>
+      uiBackground={{
+      textureMode: 'stretch',
+      texture: {
+        src: 'assets/scene/Images/Pixel_Arcade.png',
+      }}}
+    >
+    <UiEntity uiTransform={{ width: '90%', height: '90%', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', }}>
+        <Label
+          value={TeleportText}
+          fontSize={labelFont()}
+          textAlign="middle-center"
+          color={Color4.White()}
+        />
+      </UiEntity>
+    </UiEntity>
+  </ScreenInsetArea>
 )
 
 export function SetUpTriviaUi() {

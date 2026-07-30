@@ -5,6 +5,10 @@ import {
   TextShape,
   TextAlignMode,
   Entity,
+  MeshRenderer,
+  Material,
+  VisibilityComponent,
+  MaterialTransparencyMode,
 } from '@dcl/sdk/ecs'
 import { getPlayer } from '@dcl/sdk/players'
 import { signedFetch } from '~system/SignedFetch'
@@ -50,8 +54,23 @@ let titleEntity: Entity | null = null
 let rowEntities: Entity[] = []
 let boardRows = 8
 
-const HEADER_GAP = 1.4
-const LINE_HEIGHT = 0.6
+const HEADER_GAP = 2.2
+const LINE_HEIGHT = 0.4
+const OVERALL_HEADER_GAP = 1.5
+const OVERALL_INE_HEIGHT = 0.6
+
+// Genre icon shown in the header, matching the displayed category (hidden on Overall).
+const GENRE_ICON_BASE = 'assets/scene/Images/genres/'
+const HEADER_ICON_OFFSET = Vector3.create(0, -1.4, 0) // below the title — TUNE
+const HEADER_ICON_SCALE = 1                          // icon size — TUNE
+const CATEGORY_ICON_SLUG: Record<string, string> = {
+  '9': 'general', '10': 'books', '11': 'film', '12': 'music', '14': 'tv',
+  '15': 'videogames', '17': 'science', '18': 'computers', '19': 'maths',
+  '20': 'mythology', '21': 'sports', '22': 'geography', '23': 'history',
+  '24': 'politics', '25': 'art', '27': 'animals', '28': 'vehicles', '31': 'anime',
+}
+let iconEntity: Entity | null = null
+let lastIconSlug = ''
 
 export interface LeaderboardOptions {
   baseUrl: string // your deployed backend origin (no trailing slash)
@@ -90,6 +109,16 @@ export function SetUpLeaderboard(opts: LeaderboardOptions): void {
     outlineWidth: 0.15,
     textAlign: TextAlignMode.TAM_TOP_CENTER,
   })
+
+  // Header icon plane — texture set per category in render()
+  iconEntity = engine.addEntity()
+  Transform.create(iconEntity, {
+    position: HEADER_ICON_OFFSET,
+    scale: Vector3.create(HEADER_ICON_SCALE, HEADER_ICON_SCALE, HEADER_ICON_SCALE),
+    parent: rootEntity,
+  })
+  MeshRenderer.setPlane(iconEntity)
+  VisibilityComponent.create(iconEntity, { visible: false })
 
   rowEntities = []
   for (let i = 0; i < boardRows; i++) {
@@ -248,11 +277,29 @@ let lastRenderKey = ''
 
 function render(entries: Entry[], label: string): void {
   if (titleEntity !== null) {
-    const newtext = wrapTextToLines(label.toUpperCase().toString(), 2) + '\nALL-TIME'
+    const newtext = "ALL-TIME\n" + wrapTextToLines(label.toUpperCase().toString(), 2)
     TextShape.getMutable(titleEntity).text = newtext
     const Qlines = TextShape.getMutable(titleEntity).text.split('\n').length
     TextShape.getMutable(titleEntity).fontSize = 8 / Qlines
   }
+
+  // Header icon: show the current category's icon (hidden on Overall).
+  if (iconEntity !== null) {
+    const slug = CATEGORY_ICON_SLUG[displayCategory] ?? ''
+    if (slug !== lastIconSlug) {
+      lastIconSlug = slug
+      if (slug) {
+        Material.setBasicMaterial(iconEntity, {
+          texture: Material.Texture.Common({ src: GENRE_ICON_BASE + slug + '.png' }),
+          alphaTexture: Material.Texture.Common({ src: GENRE_ICON_BASE + slug + '.png' })
+        })
+        VisibilityComponent.createOrReplace(iconEntity, { visible: true })
+      } else {
+        VisibilityComponent.createOrReplace(iconEntity, { visible: false })
+      }
+    }
+  }
+
   if (rowEntities.length === 0) return
 
   const key =
@@ -268,16 +315,10 @@ function render(entries: Entry[], label: string): void {
       const name = raw.length > 16 ? raw.slice(0, 15) + '…' : raw
       shape.text = `${rank}.  ${name}      ${entries[i].score}`
       shape.textColor = Color4.White()
-      /*
-      shape.textColor =
-        rank === 1
-          ? Color4.create(1, 0.84, 0, 1)
-          : rank === 2
-          ? Color4.create(0.75, 0.75, 0.78, 1)
-          : rank === 3
-          ? Color4.create(0.8, 0.5, 0.2, 1)
-          : Color4.White()
-        */
+
+      const Transf = Transform.getMutable(rowEntities[i])
+
+      Transf.position = displayCategory == OVERALL ? Vector3.create(-1.3, -OVERALL_HEADER_GAP - i * OVERALL_INE_HEIGHT, 0) : Vector3.create(-1.3, -HEADER_GAP - i * LINE_HEIGHT, 0)
     } else {
       shape.text = ''
     }

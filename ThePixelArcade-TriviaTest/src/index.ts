@@ -1,5 +1,5 @@
 import {Color4, Vector3, Quaternion} from '@dcl/sdk/math'
-import { engine, AudioSource, TextShape, Transform, CameraModeArea, CameraType, PBTextShape, Schemas, Entity } from '@dcl/sdk/ecs'
+import { engine, AudioSource, TextShape, Transform, CameraModeArea, CameraType, PBTextShape, Schemas, Entity, MeshRenderer, Material, VisibilityComponent, MaterialTransparencyMode } from '@dcl/sdk/ecs'
 import { SetUpTriviaUi, UpdateText, UpdateShowUI, UpdateQuestionUI, UpdateAnswersUI} from './ui'
 import { syncEntity, isStateSyncronized } from '@dcl/sdk/network'
 import { getPlayer, onLeaveScene } from '@dcl/sdk/players'
@@ -249,6 +249,7 @@ const QUESTION_DURATION_MS = 15000
 const ANSWER_DURATION_MS = 3000
 const GENRE_DURATION_MS = 15000
 const GENRE_RESULT_DURATION_MS = 3000
+const ROUND_WINNER_DURATION_MS = 10000 // end-of-round winner screen
 
 // Voting players re-stamp their vote this often. The host ignores any vote it
 // hasn't seen change within VOTE_TIMEOUT_MS, so someone who leaves the scene
@@ -269,6 +270,8 @@ export const TriviaState = engine.defineComponent('TriviaStateComponent', {
   correctIndex: Schemas.Int,    // 1-4 (in a genre phase, the winning option)
   phaseEndTime: Schemas.Number, // Date.now()-based deadline for the current phase, set by host
   genreRound: Schemas.Int,      // bumped every time a new genre vote opens
+  roundWinner: Schemas.String,     // name of last round's top scorer (published by host)
+  roundWinnerScore: Schemas.Int,   // that player's score for the round
 })
 
 export const HostClaim = engine.defineComponent('HostClaimComponent', {
@@ -283,6 +286,15 @@ export const PlayerVote = engine.defineComponent('PlayerVoteComponent', {
   pulse: Schemas.Int,       // ticks up while the player is stood in a zone
 })
 
+// One per player: their score for the CURRENT round, synced so the host can
+// pull the round winner. Mirrors PlayerVote — created at runtime, no enum id.
+export const PlayerRoundScore = engine.defineComponent('PlayerRoundScoreComponent', {
+  userId: Schemas.String,
+  name: Schemas.String,
+  score: Schemas.Int,
+  genreRound: Schemas.Int,  // which round this score belongs to
+})
+
 const triviaStateEntity = engine.addEntity()
 const hostClaimEntity = engine.addEntity()
 
@@ -294,6 +306,7 @@ function setUpSyncedEntities() {
     correctIndex: 0,
     phaseEndTime: 0,
     genreRound: 0,
+    roundWinner: '', roundWinnerScore: 0,
   })
   HostClaim.create(hostClaimEntity, { hostUserId: '' })
 
@@ -380,6 +393,76 @@ function categoryForName(name: string): TriviaCategory | null {
     if (g.name === name) return g.category
   }
   return null
+}
+
+
+// =========================================================================
+// Genre icon — a single image shown under the Question Type text during a round
+// =========================================================================
+
+// Drop the generated PNGs into this folder (files are <slug>.png).
+const GENRE_ICON_BASE = 'assets/scene/Images/genres/'
+
+// TriviaCategory -> icon file slug
+const GENRE_ICON_SLUG: Record<number, string> = {
+  [TriviaCategory.GeneralKnowledge]: 'general',
+  [TriviaCategory.Books]: 'books',
+  [TriviaCategory.Film]: 'film',
+  [TriviaCategory.Music]: 'music',
+  [TriviaCategory.Television]: 'tv',
+  [TriviaCategory.VideoGames]: 'videogames',
+  [TriviaCategory.ScienceNature]: 'science',
+  [TriviaCategory.Computers]: 'computers',
+  [TriviaCategory.Mathematics]: 'maths',
+  [TriviaCategory.Mythology]: 'mythology',
+  [TriviaCategory.Sports]: 'sports',
+  [TriviaCategory.Geography]: 'geography',
+  [TriviaCategory.History]: 'history',
+  [TriviaCategory.Politics]: 'politics',
+  [TriviaCategory.Art]: 'art',
+  [TriviaCategory.Animals]: 'animals',
+  [TriviaCategory.Vehicles]: 'vehicles',
+  [TriviaCategory.Anime]: 'anime',
+}
+
+// One icon, parented under the Question_Type text entity, shown for the whole
+// question round and textured to the current genre. TUNE these to place/size it:
+const TYPE_ICON_ANCHOR = 'Question_Type'
+const TYPE_ICON_OFFSET = Vector3.create(0, -3.5, 0) // below the Q type text
+const TYPE_ICON_SCALE = 3                          // icon size
+
+let typeIconEntity: Entity | null = null
+
+function ensureTypeIcon() {
+  if (typeIconEntity !== null) return
+  const anchor = engine.getEntityOrNullByName(TYPE_ICON_ANCHOR)
+  if (anchor === null) return // model not loaded yet — try again next tick
+  const e = engine.addEntity()
+  Transform.create(e, {
+    position: TYPE_ICON_OFFSET,
+    scale: Vector3.create(TYPE_ICON_SCALE, TYPE_ICON_SCALE, TYPE_ICON_SCALE),
+    parent: anchor,
+  })
+  MeshRenderer.setPlane(e)
+  VisibilityComponent.create(e, { visible: false })
+  typeIconEntity = e
+}
+
+// Show/hide the single genre icon. `genreName` is state.curQuestionType.
+function updateTypeIcon(show: boolean, genreName: string) {
+  ensureTypeIcon()
+  if (typeIconEntity === null) return
+  const cat = show ? categoryForName(genreName) : null
+  const slug = cat !== null ? GENRE_ICON_SLUG[cat] : undefined
+  if (show && slug) {
+    Material.setBasicMaterial(typeIconEntity, {
+      texture: Material.Texture.Common({ src: GENRE_ICON_BASE + slug + '.png' }),
+      alphaTexture: Material.Texture.Common({ src: GENRE_ICON_BASE + slug + '.png' })
+    })
+    VisibilityComponent.createOrReplace(typeIconEntity, { visible: true })
+  } else {
+    VisibilityComponent.createOrReplace(typeIconEntity, { visible: false })
+  }
 }
 
 let myVoteEntity: Entity | null = null
@@ -629,12 +712,17 @@ function tryNextQuestion() {
   if (!isLocalPlayerHost()) return
   curQuestionIndex++
   if (curQuestionIndex > newQuestions.length - 1) {
-    // Round over — back to the genre vote rather than straight into more
-    // questions of the same category.
+    // Round over
+    const winner = pullRoundWinner()
     curQuestionIndex = 0
     const state = TriviaState.getMutable(triviaStateEntity)
     state.questionNumb = 0
-    startGenreVote()
+    state.roundWinner = winner ? winner.name : ''
+    state.roundWinnerScore = winner ? winner.score : 0
+    state.roundId += 1 // new roundId so every client re-renders into this phase
+    state.phase = 'roundwinner'
+    state.phaseEndTime = Date.now() + ROUND_WINNER_DURATION_MS
+    setTimeout(() => startGenreVote(), ROUND_WINNER_DURATION_MS)
   } else {
     publishCurrentQuestion()
   }
@@ -648,6 +736,61 @@ let myScore = 0
 let lastScoredRoundId = -1
 
 let tShapeScore: PBTextShape
+
+// =========================================================================
+// Per-round score (synced) — used to pull the round winner
+// =========================================================================
+
+let myRoundScore = 0
+let myRoundEntity: Entity | null = null
+let lastRoundScoreGenre = -1
+
+function ensureRoundEntity() {
+  if (myRoundEntity !== null || !isStateSyncronized()) return
+  const me = getPlayer()
+  myRoundEntity = engine.addEntity()
+  PlayerRoundScore.create(myRoundEntity, {
+    userId: me?.userId ?? '', name: me?.name ?? 'Guest', score: 0, genreRound: -1,
+  })
+  syncEntity(myRoundEntity, [PlayerRoundScore.componentId])
+}
+
+// Publish my current round score, resetting it whenever a new genre vote opens.
+function publishMyRoundScore() {
+  ensureRoundEntity()
+  if (myRoundEntity === null) return
+  const state = TriviaState.get(triviaStateEntity)
+
+  if (state.genreRound !== lastRoundScoreGenre) {
+    lastRoundScoreGenre = state.genreRound
+    myRoundScore = 0
+  }
+
+  const cur = PlayerRoundScore.get(myRoundEntity)
+  const me = getPlayer()
+  const name = me?.name ?? cur.name
+  const userId = me?.userId ?? cur.userId
+  if (cur.score === myRoundScore && cur.genreRound === state.genreRound && cur.name === name) return
+
+  const mut = PlayerRoundScore.getMutable(myRoundEntity)
+  mut.score = myRoundScore
+  mut.genreRound = state.genreRound
+  mut.name = name
+  mut.userId = userId
+}
+
+// Host-only: read every player's score for the current round and return the top.
+// Ties resolve to whichever player's entity is read first.
+function pullRoundWinner(): { name: string; score: number } | null {
+  const state = TriviaState.get(triviaStateEntity)
+  let best: { name: string; score: number } | null = null
+  for (const [, rs] of engine.getEntitiesWith(PlayerRoundScore)) {
+    if (rs.genreRound !== state.genreRound) continue
+    if (rs.score <= 0) continue
+    if (!best || rs.score > best.score) best = { name: rs.name || 'Guest', score: rs.score }
+  }
+  return best
+}
 
 // =========================================================================
 // Rendering — runs on EVERY client, driven only by synced TriviaState
@@ -664,10 +807,11 @@ let tShapeAnsD: PBTextShape
 let tShapeTimer: PBTextShape
 let tShapeQNumb: PBTextShape
 let tShapeQType: PBTextShape
+let tShapeCorAns: PBTextShape
 
 function VerifyTextField()
 {
-  // Check All The Answer Text Fields
+  // Verify Entity Text Field
   const QuestionText = engine.getEntityOrNullByName('Screen_Text')
   if (QuestionText !== null) {
     if (TextShape.has(QuestionText)) {
@@ -675,7 +819,7 @@ function VerifyTextField()
     }
   }
 
-  //
+  // Verify Entity Text Field
   const AnsAText = engine.getEntityOrNullByName('Answer_A')
   if (AnsAText !== null) {
     if (TextShape.has(AnsAText)) {
@@ -683,7 +827,7 @@ function VerifyTextField()
     }
   }
 
-  //
+  // Verify Entity Text Field
   const AnsBText = engine.getEntityOrNullByName('Answer_B')
   if (AnsBText !== null) {
     if (TextShape.has(AnsBText)) {
@@ -691,7 +835,7 @@ function VerifyTextField()
     }
   }
 
-  //
+  // Verify Entity Text Field
   const AnsCText = engine.getEntityOrNullByName('Answer_C')
   if (AnsCText !== null) {
     if (TextShape.has(AnsCText)) {
@@ -699,7 +843,7 @@ function VerifyTextField()
     }
   }
 
-  //
+  // Verify Entity Text Field
   const AnsDText = engine.getEntityOrNullByName('Answer_D')
   if (AnsDText !== null) {
     if (TextShape.has(AnsDText)) {
@@ -707,7 +851,7 @@ function VerifyTextField()
     }
   }
 
-  //
+  // Verify Entity Text Field
   const TimerText = engine.getEntityOrNullByName('Screen_Timer')
   if (TimerText !== null) {
     if (TextShape.has(TimerText)) {
@@ -715,7 +859,7 @@ function VerifyTextField()
     }
   }
 
-  //
+  // Verify Entity Text Field
   const QNumbText = engine.getEntityOrNullByName('Question_Number')
   if (QNumbText !== null) {
     if (TextShape.has(QNumbText)) {
@@ -723,29 +867,48 @@ function VerifyTextField()
     }
   }
 
-  //
+  // Verify Entity Text Field
   const QTypeText = engine.getEntityOrNullByName('Question_Type')
   if (QTypeText !== null) {
     if (TextShape.has(QTypeText)) {
       tShapeQType = TextShape.getMutable(QTypeText)
     }
   }
+
+  // Verify Entity Text Field
+  const CorAnsText = engine.getEntityOrNullByName('Correct_Text')
+  if (CorAnsText !== null) {
+    if (TextShape.has(CorAnsText)) {
+      tShapeCorAns = TextShape.getMutable(CorAnsText)
+    }
+  }
 }
 
 function renderFromState() {
   const state = TriviaState.get(triviaStateEntity)
-  // roundId 0 means the host hasn't published anything yet — leave "Loading..."
-  // on screen rather than blanking it out with empty synced strings.
   if (state.roundId === 0) return
   if (state.roundId === lastSeenRoundId && state.phase === lastSeenPhase) return
   lastSeenRoundId = state.roundId
   lastSeenPhase = state.phase
 
+  // anchor locally instead of trusting state.phaseEndTime directly
+  localPhaseAnchor = Date.now()
+  localPhaseDurationMs =
+  state.phase === 'question' ? QUESTION_DURATION_MS :
+  state.phase === 'answer'   ? ANSWER_DURATION_MS :
+  state.phase === 'genrepicked' ? GENRE_RESULT_DURATION_MS :
+  state.phase === 'roundwinner' ? ROUND_WINNER_DURATION_MS :
+  GENRE_DURATION_MS // 'genre' — see note below on parked clock
+
   VerifyTextField()
+  // Single genre icon under the Q type text, for the whole question round.
+  updateTypeIcon(
+    state.phase === 'question' || state.phase === 'answer' || state.phase === 'genrepicked',
+    state.curQuestionType
+  )
 
   if (state.phase === 'question' || state.phase === 'genre') {
-    // A genre vote draws exactly like a question: prompt on top, four options
-    // in the answer slots, all neutral until it resolves.
+    // A genre vote draws exactly like a question
     UpdateQuestionUI(true, state.questionText)
     
     const Qlines = Math.ceil(Math.log2((state.questionText.length + 65) / 40))
@@ -753,6 +916,9 @@ function renderFromState() {
     tShapeQuest.text = wrapTextToLines(state.questionText, Qlines)
     const lineCount = tShapeQuest.text.split('\n').length
     tShapeQuest.fontSize = 30 / lineCount
+    tShapeQuest.textColor = Color4.White()
+
+    tShapeCorAns.text = state.phase === 'genre' ? "" : "Correct:\n" + myScore.toString() + " / 10"
 
     tShapeQNumb.text = state.phase === 'question' ? "Q" + state.questionNumb : ""
     tShapeQType.text = state.phase === 'question' ? wrapTextToLines(state.curQuestionType, 2) : ""
@@ -772,23 +938,37 @@ function renderFromState() {
     tShapeAnsD.fontSize = 15 / ADlines
 
   } else if (state.phase === 'genrepicked') {
-    // Winning genre announced. Nothing is scored here, so the losing options
-    // are dimmed rather than marked wrong.
+    // Winning genre announced
     UpdateQuestionUI(true, state.questionText + " Selected")
 
     tShapeQuest.text = wrapText(state.questionText, 30)
+    tShapeQuest.textColor = Color4.White()
     const Qlines = tShapeQuest.text.split('\n').length
     tShapeQuest.fontSize = 30 / Qlines
 
     const shapes = [tShapeAnsA, tShapeAnsB, tShapeAnsC, tShapeAnsD]
     shapes.forEach((s, i) => { s.textColor = (i + 1 === state.correctIndex) ? Color4.create(0,1,0,1) : Color4.create(1,1,1,0.35) })
 
-    // Point the leaderboard at the category now being played. In this phase the
-    // answer slots still hold the four genre names, with correctIndex marking
-    // the winner, so this recovers the category on every client.
+    // Point the leaderboard at the category now being played
     const winnerName = [state.answerA, state.answerB, state.answerC, state.answerD][state.correctIndex - 1]
     const winnerCat = categoryForName(winnerName)
     if (winnerCat !== null) setCurrentCategory(winnerCat, winnerName)
+
+  } else if (state.phase === 'roundwinner') {
+    // Dedicated end-of-round screen: the round winner on the main board for 10s.
+    UpdateQuestionUI(true, state.roundWinner ? state.roundWinner + " won the round" : "No winner this round")
+
+    const text = state.roundWinner
+      ? state.roundWinner + " wins the round!\n" + state.roundWinnerScore + " / 10"
+      : "No winner\nthis round"
+    tShapeQuest.text = text
+    tShapeQuest.textColor = Color4.White()
+    tShapeQuest.fontSize = 30 / text.split('\n').length
+
+    tShapeCorAns.text = ""
+    tShapeQNumb.text = ""
+    tShapeQType.text = ""
+    tShapeAnsA.text = ""; tShapeAnsB.text = ""; tShapeAnsC.text = ""; tShapeAnsD.text = ""
 
   } else {
     // 'answer' phase
@@ -799,6 +979,8 @@ function renderFromState() {
       lastScoredRoundId = state.roundId
       if (gotItRight) {
         myScore++
+        myRoundScore++ // this round's tally, for the round winner
+        tShapeCorAns.text = "Correct:\n" + myScore.toString() + " / 10"
         UpdateAnswersUI(true, myScore)
         submitCorrectAnswer() // record the point in the current category (all-time board)
       }
@@ -819,6 +1001,7 @@ function renderFromState() {
 
     UpdateQuestionUI(false, "")
     tShapeQuest.text = gotItRight ? 'Correct' : 'Incorrect'
+    tShapeQuest.textColor = gotItRight ? Color4.Green() : Color4.Red()
     tShapeQuest.fontSize = 25
     const shapes = [tShapeAnsA, tShapeAnsB, tShapeAnsC, tShapeAnsD]
     shapes.forEach((s, i) => { s.textColor = (i + 1 === state.correctIndex) ? Color4.create(0,1,0,1) : Color4.create(1,0,0,1) })
@@ -832,26 +1015,64 @@ export function GetCurrentState()
   return state.phase
 }
 
-// Runs every tick (unlike renderFromState, which is gated on roundId/phase
-// change) since the countdown needs to visibly tick down every frame.
+// Runs every tick
 let lastRenderedSecond = -1
 let lastShowedClock = false
+
+// Local timer anchoring
+let lastTimerPhase = ''
+let lastTimerRoundId = -1
+let localPhaseAnchor = 0
+let localPhaseDurationMs = 0
+
+// Tracks whether we've locally anchored the running countdown
+let genreClockRunning = false
+
 function renderTimer() {
   if (!tShapeTimer) return
 
   const state = TriviaState.get(triviaStateEntity)
   const showsClock = state.phase === 'question' || state.phase === 'genre'
 
-  // phaseEndTime 0 during a genre vote means the clock is parked: nobody has
-  // stepped into a zone yet, so it sits at the full duration.
-  const parked = state.phase === 'genre' && state.phaseEndTime === 0
-  const msRemaining = parked ? GENRE_DURATION_MS : state.phaseEndTime - Date.now()
+  // Phase or round changed
+  if (state.phase !== lastTimerPhase || state.roundId !== lastTimerRoundId) {
+    lastTimerPhase = state.phase
+    lastTimerRoundId = state.roundId
+    genreClockRunning = false // re-evaluated fresh below for this new phase/round
+
+    if (state.phase === 'question') {
+      localPhaseAnchor = Date.now()
+      localPhaseDurationMs = QUESTION_DURATION_MS
+    } else if (state.phase === 'answer') {
+      localPhaseAnchor = Date.now()
+      localPhaseDurationMs = ANSWER_DURATION_MS
+    } else if (state.phase === 'genrepicked') {
+      localPhaseAnchor = Date.now()
+      localPhaseDurationMs = GENRE_RESULT_DURATION_MS
+    }
+  }
+
+  // Genre phase: phaseEndTime === 0 means parked
+  if (state.phase === 'genre') {
+    const parked = state.phaseEndTime === 0
+    if (parked) {
+      genreClockRunning = false
+    } else if (!genreClockRunning) {
+      genreClockRunning = true
+      localPhaseAnchor = Date.now()
+      localPhaseDurationMs = GENRE_DURATION_MS
+    }
+  }
+
+  const msRemaining =
+    state.phase === 'genre' && !genreClockRunning
+      ? GENRE_DURATION_MS
+      : localPhaseDurationMs - (Date.now() - localPhaseAnchor)
+
   const secondsRemaining = Math.max(0, Math.ceil(msRemaining / 1000))
 
   // Skip redundant text writes when the displayed number hasn't changed
   if (secondsRemaining === lastRenderedSecond && showsClock === lastShowedClock) return
-
-  //console.log(secondsRemaining)
 
   lastRenderedSecond = secondsRemaining
   lastShowedClock = showsClock
@@ -959,9 +1180,11 @@ export function main() {
   VerifyTextField()
   tShapeQuest.text = "Loading..."
 
+  /*
   const firstPersonZone = engine.addEntity()
   Transform.create(firstPersonZone, { position: Vector3.create(0, 0, 0) })
   CameraModeArea.create(firstPersonZone, { area: Vector3.create(25, 15, 25), mode: CameraType.CT_FIRST_PERSON })
+  */
 
   setUpSyncedEntities()
   SetUpTriviaUi()
@@ -990,6 +1213,7 @@ export function main() {
   engine.addSystem(() => {
     tryClaimHost()
     publishMyVote()
+    publishMyRoundScore()
     renderFromState()
     renderTimer()
     tickLeaderboard()
