@@ -1,0 +1,123 @@
+import { engine, AudioSource } from '@dcl/sdk/ecs'
+import { getTriggerEvents } from '@dcl/asset-packs/dist/events'
+import { TriggerType } from '@dcl/asset-packs'
+import { movePlayerTo } from '~system/RestrictedActions'
+import { Vector3 } from '@dcl/sdk/math'
+import { UpdateText, UpdateShowUI, UpdateTeleportUI} from '../../../src/ui'
+import { syncEntity } from '@dcl/sdk/network'
+
+// TeleportPositionSettings
+const teleportPosition_1 = Vector3.create(0, 1, 7.5)
+const TeleportCameraTarget_1 = Vector3.create(0, 1, 6.5)
+const teleportPosition_2 = Vector3.create(-5, 1, 60)
+const TeleportCameraTarget_2 = Vector3.create(-4, 1, 60)
+const TeleportCountdown = 5
+let teleportID = 0
+
+let isCountingDown = false
+let timeRemaining = 0
+
+export function main() {
+
+    // Teleporter 1
+    const trigger1 = engine.getEntityOrNullByName('Trigger_Arcade1')
+    if (!trigger1) {
+        console.log('Trigger_Arcade1 not found, check the name in the entity tree')
+        return
+    }
+    getTriggerEvents(trigger1).on(TriggerType.ON_PLAYER_ENTERS_AREA, () => {
+        teleportID = 1
+        startCountdown()
+    })
+    getTriggerEvents(trigger1).on(TriggerType.ON_PLAYER_LEAVES_AREA, () => {
+        teleportID = 0
+        cancelCountdown()
+    })
+
+    // Teleporter 2
+    const trigger2 = engine.getEntityOrNullByName('Trigger_Arcade1_Rtrn')
+    if (!trigger2) {
+        console.log('Trigger_Arcade1_Rtrn not found, check the name in the entity tree')
+        return
+    }
+    getTriggerEvents(trigger2).on(TriggerType.ON_PLAYER_ENTERS_AREA, () => {
+        teleportID = 2
+        startCountdown()
+    })
+    getTriggerEvents(trigger2).on(TriggerType.ON_PLAYER_LEAVES_AREA, () => {
+        teleportID = 0
+        cancelCountdown()
+    })
+
+    // Ticks the countdown every frame
+    engine.addSystem((dt: number) => {
+        if (!isCountingDown) return   
+        timeRemaining -= dt   
+        // Log the whole-second mark so you can see the countdown in the console.
+        const secondsLeft = Math.ceil(timeRemaining)
+        if (secondsLeft !== lastLoggedSecond && secondsLeft >= 0) {
+            lastLoggedSecond = secondsLeft
+            if(teleportID == 1) {UpdateTeleportUI(true, "Teleporting To Trivia: " + secondsLeft.toString())}
+            if(teleportID == 2) {UpdateTeleportUI(true, "Teleporting To Hub: " + secondsLeft.toString())}
+        } 
+        if (timeRemaining <= 0) {
+            isCountingDown = false
+            teleportPlayer()
+        }
+    })
+}
+
+let lastLoggedSecond = -1
+
+function startCountdown() {
+    if (isCountingDown) return // already running, ignore re-triggers
+
+    isCountingDown = true
+    timeRemaining = TeleportCountdown
+    lastLoggedSecond = -1
+
+    if(teleportID == 1) {UpdateTeleportUI(true, "Teleporting To Trivia: " + TeleportCountdown.toString())}
+    if(teleportID == 2) {UpdateTeleportUI(true, "Teleporting To Hub: " + TeleportCountdown.toString())}
+}
+
+function cancelCountdown() {
+    if (!isCountingDown) return
+
+    isCountingDown = false
+    UpdateShowUI(false)
+    UpdateTeleportUI(false, "")
+    //console.log('Teleport cancelled, player left the trigger area')
+}
+
+async function teleportPlayer() {
+    //console.log('Teleporting now!')
+    UpdateShowUI(false)
+    UpdateTeleportUI(false, "")
+    if(teleportID == 1)
+    {
+        await movePlayerTo({
+            newRelativePosition: teleportPosition_1,
+            cameraTarget: TeleportCameraTarget_1,
+        })
+
+        // Play Sound
+        const QuestionText = engine.getEntityOrNullByName('Answer_B')
+        if (QuestionText != null) {
+            syncEntity(QuestionText, [AudioSource.componentId], 100)
+            const audio = AudioSource.getMutableOrNull(QuestionText) ?? AudioSource.create(QuestionText)
+            
+            audio.audioClipUrl = 'assets/sounds/Enter_Trivia.wav'
+            audio.volume = 1.0
+            audio.loop = false
+            audio.playing = false
+            audio.playing = true
+        }
+    }
+    if(teleportID == 2)
+    {
+        await movePlayerTo({
+            newRelativePosition: teleportPosition_2,
+            cameraTarget: TeleportCameraTarget_2,
+        })
+    }
+}
